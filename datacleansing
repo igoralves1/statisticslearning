@@ -1,0 +1,161 @@
+install.packages("farff")
+install.packages("tidyr")
+install.packages("dplyr")
+install.packages("reshape2")
+library(tidyr)
+library(dplyr)
+library(foreign)
+library(farff)
+library(reshape2)
+
+#Dataset 1 - classification type
+d1c <- read.arff("/Users/ladykat/Desktop/Autism-Adult-Data.arff")
+d1c
+##STEP 1: DATA CHARACTERISTICS
+#dimensions: 
+#1: Sample Size
+dim(d1c)
+#number of variables
+ncol(d1c)
+#number of observations
+nrow(d1c)
+#Summary of all the counts
+summary(d1c)
+#Subset samples of observations with missing values
+d1c_NA <- d1c[rowSums(is.na(d1c)) > 0,]
+#Listing the names of all variables and how many levels of choices:binary/multi-class
+str(d1c)
+#Checking if Factor = categorical or not. Interpretation: TRUE=categorical, FALSE = continuous
+f <- sapply(d1c, is.factor)
+which(f)
+#select the categorical variables only
+d1c[,f]
+#select the continuous variables only
+d1c[,!f]
+#############################################################
+
+##STEP 2:MISSING VALUES Treatment Using Multivariate Imputation by Chained Equations
+install.packages("mice" , dependencies = TRUE, repos = "http://cran.rstudio.com/")
+require(mice)
+d1c_2 <- mice(d1c)
+d1c_2 <- complete(d1c_2)
+summary(d1c_2)
+##############################################################
+
+#APPLY ALL METHODS AND COMPARE RESULTS: 
+library(caret)
+methods <- c('boot', 'cv', 'repeatedcv', 'boot632', 'LGOCV', 'LOOCV')
+#index:
+n <- 5
+tmp <- createDataPartition(d1c_2$austim, p = 0.8, times = n)
+ll <- lapply(methods, function(x)
+  trControl = trainControl(method = x, index = tmp))
+ll <- sapply(ll, '[<-','index',NULL)
+ll
+
+##########################################################
+#to check whether variable is a factor or not:
+head(d1c_2)
+(l <- sapply(d1c_2, function(x) is.factor(x)))
+m <- d1c_2[,1]
+m
+ifelse(n <- sapply(m, function(x) length(levels(x))) == 1, "DROP", "NODROP")
+
+###CHECK: (debugging error in "constrasts")
+dat <- na.omit(d1c_2)
+fctr <- lapply(dat[sapply(dat, is.factor)], droplevels)
+sapply(fctr, nlevels)
+
+#REMOVE 1 LEVEL FACTOR: AGE_DESC
+library(dplyr)
+d1c_3 <- subset(d1c_2, select = -c(age_desc))
+###########################################################
+
+##STEP 3.1: Estimating Model Accuracy using k-Fold Cross Validation (CV) 
+install.packages("pbkrtest")                       
+update.packages('Rcpp')
+install.packages("DEoptimR")
+install.packages("caret", dependencies = TRUE)
+install.packages(c('ddalpha', 'recipes'))
+library(caret)
+set.seed(5)
+d1c_folds <- createFolds(y = d1c_3$austim, k = 5, list = TRUE, returnTrain = TRUE)
+sapply(d1c_folds, length)
+#Using CV Method 
+train_contro1l <- trainControl(method ="cv", number = 5)
+grid1 <- expand.grid(.fL = c(0),.usekernel = c(FALSE))
+#train doesnt work :(
+model1 <- train(austim~.,data = d1c_3, trControl = train_control1, method ="nb", tuneGrid = grid1)
+print(model1)
+###############################################################
+##STEP 3.2: Estimating Model Accuracy using Bootstrap [BOOT]
+#Take random samples from the dataset against which to evaluate the model- with 10 resamples
+library(caret)
+library(boot)
+library(recipes)
+
+#Using Boot
+set.seed(5)
+train_contro12 <- trainControl(method ="boot", number = 5)
+#grid2 <- expand.grid(.fL = c(0),.usekernel = c(FALSE))
+#train doesnt work :(
+model2 <- train(austim~.,data = d1c_3, trControl = train_control2, method ="nb", tuneGrid = NULL)
+print(model2)
+#[WOW TOOOO SLOOOOW~]
+################################################################
+##STEP 3.3: Estimating Model Accuracy using Repeated k-Fold Cross Validation [REPEATED CV]
+
+set.seed(5)
+str(d1c_3)
+train_control3 <- trainControl(method = "repeatedcv", number = 5, repeats = 5)
+model3 <- train(austim~., data = d1c_3, trControl = train_control3, method = "lvq", tuneGrid = NULL)
+print(model3)
+
+
+################################################################
+##STEP 3.4: Estimating Model Accuracy using Leave One Out Cross Validation [LOOCV]
+set.seed(5)
+train_control4 <- trainControl(method = "LOOCV")
+model4 <- train(austim~., data = d1c_2, trControl = train_control4, method="nb")
+print(model3)
+
+################################################################
+##STEP 3.5: Estimating Model Accuracy using Data Split Method [WORKING!]
+library (klaR)
+library(caret)
+library(e1071)
+#Define 80/20 split of the dataset based on AUTISM (AUSTIM)
+
+split = 0.80
+
+traind1c <- createDataPartition(d1c_3$austim, p = split, list = FALSE)
+data_train <-d1c_3[traind1c,]
+data_test <-d1c_3[-traind1c,]
+
+#Train NAIVE BAYES MODEL:
+
+model5 <- naiveBayes(austim ~., data=data_train)
+class(model5)
+
+summary(model5)
+#Intepretation: The model provides a-priori probabilities of no-occurence and 
+#recurrence events as well as conditional probability tables across all attributes. 
+print(model5)
+#Intepretation: The function of print is to examine the conditional probability tables
+
+#PREDICT by Applying the Naive Bayes' Classifier:
+x_test <- data_test[,1:4]
+y_test <- data_test[,5]
+predict5 <- predict(model5, x_test)
+#Summary [not working for now]
+print(predict5)
+confusionMatrix(predict5, y_test)
+
+####################################
+#Collect resamples: 
+library(mlbench)
+results <- resamples(list(cv = model1,boot = model2 , LOOCV = model3, DataSplit = model5))
+summary (results)
+dotplot(results)
+#####################################
+
